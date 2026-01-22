@@ -1,0 +1,7 @@
+{
+  "name": "DOPA.BUZZ | Voice Interface",
+  "description": "The official AI voice interface for DOPA.BUZZ. High-fidelity business intelligence and engagement.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

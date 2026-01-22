@@ -1,0 +1,236 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sally Wukr - Metallic UI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Google Sans', Roboto, sans-serif;
+      /* Match the app background to remove side bars */
+      background: linear-gradient(145deg, #e8e8e8 0%, #c5c5c5 50%, #e0e0e0 100%);
+      background-attachment: fixed;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      overflow-x: hidden;
+    }
+
+    .container-chassis {
+      width: 100%;
+      max-width: 500px; /* Comfortable max-width for desktop while being full-width on mobile */
+      background: linear-gradient(145deg, #e8e8e8 0%, #c5c5c5 50%, #e0e0e0 100%);
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 0 100px rgba(0,0,0,0.1);
+    }
+
+    /* Only add border radius on larger screens to look like a phone */
+    @media (min-width: 501px) {
+      .container-chassis {
+        margin: 20px 0;
+        min-height: calc(100vh - 40px);
+        border-radius: 40px;
+        box-shadow: 
+          0 20px 60px rgba(0, 0, 0, 0.3),
+          inset 0 1px 2px rgba(255, 255, 255, 0.8);
+      }
+    }
+
+    .container-chassis::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 40%;
+      background: linear-gradient(180deg, rgba(255,255,255,0.4) 0%, transparent 100%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .logo-box {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(145deg, #2c2c2c 0%, #1a1a1a 100%);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.3),
+        inset 0 1px 1px rgba(255, 255, 255, 0.1);
+    }
+
+    .btn-icon-metal {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(145deg, #d4d4d4 0%, #b8b8b8 100%);
+      border: none;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 
+        0 2px 8px rgba(0, 0, 0, 0.15),
+        inset 0 1px 1px rgba(255, 255, 255, 0.6),
+        inset 0 -1px 1px rgba(0, 0, 0, 0.1);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      color: #3c3c3c;
+    }
+
+    .btn-direct-black {
+      background: linear-gradient(145deg, #1a1a1a 0%, #0d0d0d 100%);
+      color: white;
+      padding: 0 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      border-radius: 12px;
+      box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.4),
+        inset 0 1px 1px rgba(255, 255, 255, 0.1);
+      border: none;
+      cursor: pointer;
+    }
+
+    .profile-image-bezel {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #c0c0c0 0%, #a8a8a8 100%);
+      padding: 8px;
+      box-shadow: 
+        0 12px 32px rgba(0, 0, 0, 0.25),
+        inset 0 2px 4px rgba(255, 255, 255, 0.5),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.2);
+      transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .status-badge-metal {
+      background: linear-gradient(145deg, #b8b8b8 0%, #a0a0a0 100%);
+      color: #2c2c2c;
+      padding: 8px 28px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+      box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.15),
+        inset 0 1px 2px rgba(255, 255, 255, 0.6);
+    }
+
+    .name-gold-italic {
+      font-size: 42px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #d4a574 0%, #b8860b 50%, #d4a574 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: 2px;
+      font-style: italic;
+      text-shadow: 0 2px 8px rgba(212, 165, 116, 0.3);
+      text-transform: uppercase;
+    }
+
+    .action-btn-circle {
+      aspect-ratio: 1;
+      background: linear-gradient(145deg, #d8d8d8 0%, #c0c0c0 100%);
+      border: none;
+      border-radius: 50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      box-shadow: 
+        0 6px 20px rgba(0, 0, 0, 0.2),
+        inset 0 2px 3px rgba(255, 255, 255, 0.6),
+        inset 0 -2px 3px rgba(0, 0, 0, 0.15);
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .action-btn-circle:active {
+      transform: translateY(2px);
+      box-shadow: inset 0 3px 6px rgba(0,0,0,0.2);
+    }
+
+    .action-btn-circle.active {
+      background: linear-gradient(145deg, #ff4d4d 0%, #cc0000 100%);
+      color: white;
+      box-shadow: 0 0 20px rgba(255,0,0,0.3);
+    }
+
+    .bottom-btn-rect {
+      background: linear-gradient(145deg, #bdbdbd 0%, #a8a8a8 100%);
+      border: none;
+      padding: 16px 20px;
+      border-radius: 16px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #2c2c2c;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      box-shadow: 
+        0 6px 20px rgba(0, 0, 0, 0.15),
+        inset 0 1px 2px rgba(255, 255, 255, 0.5);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .coherence-track {
+      width: 100%;
+      height: 4px;
+      background: rgba(0,0,0,0.1);
+      border-radius: 10px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .coherence-fill {
+      height: 100%;
+      background: #b8860b;
+      transition: width 1s ease-out;
+    }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "recharts": "https://esm.sh/recharts@^3.7.0"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>

@@ -16,7 +16,6 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Google Sans', Roboto, sans-serif;
-      /* Match the app background to remove side bars */
       background: linear-gradient(145deg, #e8e8e8 0%, #c5c5c5 50%, #e0e0e0 100%);
       background-attachment: fixed;
       min-height: 100vh;
@@ -27,7 +26,7 @@
 
     .container-chassis {
       width: 100%;
-      max-width: 500px; /* Comfortable max-width for desktop while being full-width on mobile */
+      max-width: 500px;
       background: linear-gradient(145deg, #e8e8e8 0%, #c5c5c5 50%, #e0e0e0 100%);
       padding: 24px;
       position: relative;
@@ -38,7 +37,6 @@
       box-shadow: 0 0 100px rgba(0,0,0,0.1);
     }
 
-    /* Only add border radius on larger screens to look like a phone */
     @media (min-width: 501px) {
       .container-chassis {
         margin: 20px 0;
@@ -220,17 +218,20 @@
 <script type="importmap">
 {
   "imports": {
-    "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react-dom": "https://esm.sh/react-dom@^19.2.3",
+    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
     "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "recharts": "https://esm.sh/recharts@^3.7.0"
+    "recharts": "https://esm.sh/recharts@^3.7.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
   }
 }
 </script>
 </head>
 <body>
   <div id="root"></div>
+  <script type="module" src="./index.tsx"></script>
 </body>
 </html>

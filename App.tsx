@@ -66,7 +66,8 @@ const App: React.FC = () => {
     setIsGeneratingBrief(true);
     setStatus('Optimizing Brief...');
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const apiKey = process.env.API_KEY || '';
+      const ai = new GoogleGenAI({ apiKey });
       const transcript = history.map(h => `${h.role}: ${h.text}`).join('\n');
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
@@ -76,7 +77,10 @@ const App: React.FC = () => {
       const name = body.match(/Name:?\s*([^\n]+)/i);
       setPendingEmail({ recipient: RICHARD_EMAIL, body, clientName: name ? name[1].trim() : "Strategic Lead" });
       setStatus('Synthesis Complete');
-    } catch (err) { setStatus('Hardware Link Error'); } finally { setIsGeneratingBrief(false); }
+    } catch (err) { 
+      console.error(err);
+      setStatus('Synthesis Error'); 
+    } finally { setIsGeneratingBrief(false); }
   };
 
   const startDopa = async () => {
@@ -87,7 +91,8 @@ const App: React.FC = () => {
     try {
       setStatus('Linking Neural Axis...');
       setHistory([]);
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const apiKey = process.env.API_KEY || '';
+      const ai = new GoogleGenAI({ apiKey });
       const iCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const oCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       await iCtx.resume(); await oCtx.resume();
@@ -135,7 +140,10 @@ const App: React.FC = () => {
               sourcesRef.current.clear(); nextStartTimeRef.current = 0; setIsTalking(false);
             }
           },
-          onerror: () => setIsActive(false),
+          onerror: (e) => {
+            console.error(e);
+            setIsActive(false);
+          },
           onclose: () => setIsActive(false),
         },
         config: {
@@ -146,12 +154,14 @@ const App: React.FC = () => {
         },
       });
       sessionRef.current = await sPromise;
-    } catch (err) { setStatus('Neural Link Offline'); }
+    } catch (err) { 
+      console.error(err);
+      setStatus('Offline'); 
+    }
   };
 
   return (
     <div className="container-chassis">
-      {/* Header */}
       <div className="flex justify-between items-center mb-10 relative z-10">
         <div className="logo-box">
           <img src={TOP_LOGO_URL} alt="WUKR" className="w-full h-full object-cover" />
@@ -164,7 +174,6 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Profile Section */}
       <div className="flex flex-col items-center mb-10 relative z-10">
         <div className="profile-image-wrapper mb-6">
           <div className={`profile-image-bezel ${isActive ? 'scale-110 shadow-[0_0_40px_rgba(184,134,11,0.3)]' : 'grayscale opacity-80 scale-100'}`}>
@@ -175,35 +184,23 @@ const App: React.FC = () => {
         <div className="name-gold-italic">SALLY WUKR</div>
       </div>
 
-      {/* Actions Grid */}
       <div className="grid grid-cols-3 gap-5 mb-10 relative z-10">
-        <button 
-          onClick={startDopa} 
-          className={`action-btn-circle ${isActive ? 'active' : ''}`}
-        >
+        <button onClick={startDopa} className={`action-btn-circle ${isActive ? 'active' : ''}`}>
           {isActive ? <MicOff className="w-8 h-8" /> : <Mic2 className="w-8 h-8 text-[#3c3c3c]" />}
           <span className="text-[9px] font-black uppercase tracking-wider">{isActive ? 'MUTE' : 'START'}</span>
         </button>
         
-        <button 
-          onClick={() => setVoiceProfile(p => p === 'Kore' ? 'Zephyr' : 'Kore')} 
-          className="action-btn-circle"
-        >
+        <button onClick={() => setVoiceProfile(p => p === 'Kore' ? 'Zephyr' : 'Kore')} className="action-btn-circle">
           <Wind className="w-7 h-7 text-[#3c3c3c]" />
           <span className="text-[9px] font-black uppercase tracking-wider">{voiceProfile}</span>
         </button>
 
-        <button 
-          onClick={generateBriefing} 
-          disabled={isGeneratingBrief || history.length < 3}
-          className={`action-btn-circle ${history.length < 3 ? 'opacity-30' : 'animate-pulse'}`}
-        >
+        <button onClick={generateBriefing} disabled={isGeneratingBrief || history.length < 3} className={`action-btn-circle ${history.length < 3 ? 'opacity-30' : 'animate-pulse'}`}>
           <FileText className="w-7 h-7 text-[#3c3c3c]" />
           <span className="text-[9px] font-black uppercase tracking-wider">BRIEF</span>
         </button>
       </div>
 
-      {/* Bottom Metrics */}
       <div className="grid grid-cols-2 gap-4 mt-auto relative z-10">
         <div className="bottom-btn-rect flex-col items-start px-5">
           <div className="flex items-center justify-between w-full mb-1">
@@ -222,7 +219,6 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Drawer Overlay for History */}
       {showHistory && (
         <div className="absolute inset-0 z-[100] bg-black/40 backdrop-blur-md animate-in fade-in">
           <div className="absolute inset-x-0 bottom-0 bg-white/95 h-[80%] rounded-t-[2.5rem] shadow-2xl flex flex-col p-8 animate-in slide-in-from-bottom">
@@ -250,7 +246,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Uplink Synthesis Modal */}
       {pendingEmail && (
         <div className="absolute inset-0 z-[200] bg-white/60 backdrop-blur-2xl flex items-center justify-center p-8 animate-in fade-in">
           <div className="bg-white border-2 border-slate-100 p-10 rounded-[3rem] shadow-2xl text-center relative overflow-hidden">
@@ -259,12 +254,7 @@ const App: React.FC = () => {
             </div>
             <h3 className="text-2xl font-black mb-4 uppercase italic tracking-tight text-slate-900">Uplink Ready</h3>
             <p className="text-slate-500 text-xs mb-10 leading-relaxed italic">Strategic brief synthesized for <strong>{pendingEmail.clientName}</strong>. Push to Richard Fortune's terminal?</p>
-            <button 
-              onClick={() => { window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${RICHARD_EMAIL}&su=${encodeURIComponent(`AXIS LEAD: ${pendingEmail.clientName}`)}&body=${encodeURIComponent(pendingEmail.body)}`); setPendingEmail(null); }} 
-              className="w-full bg-slate-900 text-white font-black py-5 rounded-2xl text-sm tracking-widest uppercase transition-all shadow-xl active:scale-95"
-            >
-              TRANSMIT FINDINGS
-            </button>
+            <button onClick={() => { window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${RICHARD_EMAIL}&su=${encodeURIComponent(`AXIS LEAD: ${pendingEmail.clientName}`)}&body=${encodeURIComponent(pendingEmail.body)}`); setPendingEmail(null); }} className="w-full bg-slate-900 text-white font-black py-5 rounded-2xl text-sm tracking-widest uppercase transition-all shadow-xl active:scale-95">TRANSMIT FINDINGS</button>
             <button onClick={() => setPendingEmail(null)} className="mt-8 text-slate-400 text-[9px] font-black uppercase tracking-[0.4em] hover:text-red-600">Abort Protocol</button>
           </div>
         </div>

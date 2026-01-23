@@ -44,6 +44,15 @@ export interface Client {
   returning_client: boolean;
   client_value_score: number;
   manus_task_id?: string;
+  phone_number?: string;
+  phone_verified?: boolean;
+  call_preferences?: {
+    do_not_call: boolean;
+    preferred_time: string;
+    timezone: string;
+  };
+  last_call_at?: string;
+  next_follow_up?: string;
   metadata: Record<string, any>;
   created_at: string;
   updated_at: string;

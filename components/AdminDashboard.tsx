@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Users, Clock, TrendingUp, AlertCircle, Crown, Mail } from 'lucide-react';
+import { DollarSign, Users, Clock, TrendingUp, AlertCircle, Crown, Mail, Phone, PhoneCall, PhoneIncoming, PhoneOutgoing } from 'lucide-react';
 import { clientService } from '../services/clientService';
 import { Client } from '../types';
+import { supabase } from '../services/supabaseClient';
 
 const AdminDashboard: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
@@ -11,8 +12,16 @@ const AdminDashboard: React.FC = () => {
     freeClients: 0,
     expiredClients: 0,
   });
+  const [callStats, setCallStats] = useState({
+    totalCalls: 0,
+    inboundCalls: 0,
+    outboundCalls: 0,
+    averageDuration: 0,
+  });
+  const [recentCalls, setRecentCalls] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'paid' | 'free' | 'expired'>('all');
+  const [callingClient, setCallingClient] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -25,7 +34,65 @@ const AdminDashboard: React.FC = () => {
 
     setClients(allClients);
     setStats(revenueStats);
+
+    await loadCallData();
     setLoading(false);
+  };
+
+  const loadCallData = async () => {
+    const { data: calls } = await supabase
+      .from('calls')
+      .select('*, clients(name, email)')
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (calls) {
+      setRecentCalls(calls);
+
+      const totalCalls = calls.length;
+      const inbound = calls.filter(c => c.direction === 'inbound').length;
+      const outbound = calls.filter(c => c.direction === 'outbound').length;
+      const avgDuration = calls.length > 0
+        ? Math.floor(calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0) / calls.length)
+        : 0;
+
+      setCallStats({
+        totalCalls,
+        inboundCalls: inbound,
+        outboundCalls: outbound,
+        averageDuration: avgDuration,
+      });
+    }
+  };
+
+  const makeCall = async (clientId: string) => {
+    setCallingClient(clientId);
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telnyx-call`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ client_id: clientId }),
+        }
+      );
+
+      if (response.ok) {
+        await loadCallData();
+        alert('Call initiated successfully!');
+      } else {
+        const error = await response.json();
+        alert(`Failed to initiate call: ${error.error}`);
+      }
+    } catch (error) {
+      alert('Error initiating call');
+      console.error(error);
+    } finally {
+      setCallingClient(null);
+    }
   };
 
   const getDaysRemaining = (expiresAt?: string): number | null => {
@@ -102,6 +169,48 @@ const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div className="obsidian-card p-6 border border-purple-500/30 rounded-xl">
+            <div className="flex items-center justify-between mb-4">
+              <Phone className="w-8 h-8 text-purple-500" />
+              <div className="text-right">
+                <p className="text-3xl font-bold text-purple-400">{callStats.totalCalls}</p>
+                <p className="text-sm text-gray-400">Total Calls</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="obsidian-card p-6 border border-cyan-500/30 rounded-xl">
+            <div className="flex items-center justify-between mb-4">
+              <PhoneIncoming className="w-8 h-8 text-cyan-500" />
+              <div className="text-right">
+                <p className="text-3xl font-bold text-cyan-400">{callStats.inboundCalls}</p>
+                <p className="text-sm text-gray-400">Inbound Calls</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="obsidian-card p-6 border border-orange-500/30 rounded-xl">
+            <div className="flex items-center justify-between mb-4">
+              <PhoneOutgoing className="w-8 h-8 text-orange-500" />
+              <div className="text-right">
+                <p className="text-3xl font-bold text-orange-400">{callStats.outboundCalls}</p>
+                <p className="text-sm text-gray-400">Outbound Calls</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="obsidian-card p-6 border border-teal-500/30 rounded-xl">
+            <div className="flex items-center justify-between mb-4">
+              <Clock className="w-8 h-8 text-teal-500" />
+              <div className="text-right">
+                <p className="text-3xl font-bold text-teal-400">{callStats.averageDuration}s</p>
+                <p className="text-sm text-gray-400">Avg Duration</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold gold-gradient">Client List</h2>
@@ -160,6 +269,7 @@ const AdminDashboard: React.FC = () => {
                   <th className="text-left p-3 text-gray-400 font-semibold">Paid</th>
                   <th className="text-left p-3 text-gray-400 font-semibold">Score</th>
                   <th className="text-left p-3 text-gray-400 font-semibold">Expires</th>
+                  <th className="text-left p-3 text-gray-400 font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -223,6 +333,20 @@ const AdminDashboard: React.FC = () => {
                           <span className="text-gray-600">-</span>
                         )}
                       </td>
+                      <td className="p-3">
+                        {client.phone_number ? (
+                          <button
+                            onClick={() => makeCall(client.id)}
+                            disabled={callingClient === client.id}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <PhoneCall className="w-4 h-4" />
+                            {callingClient === client.id ? 'Calling...' : 'Call'}
+                          </button>
+                        ) : (
+                          <span className="text-gray-600 text-sm">No phone</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -233,6 +357,58 @@ const AdminDashboard: React.FC = () => {
               <div className="text-center py-12 text-gray-500">
                 <Users className="w-16 h-16 mx-auto mb-4 opacity-20" />
                 <p>No clients found in this category.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-8 obsidian-card border border-gold-500/30 rounded-xl p-6">
+          <h2 className="text-2xl font-bold gold-gradient mb-6">Recent Calls</h2>
+          <div className="space-y-3">
+            {recentCalls.length > 0 ? (
+              recentCalls.map((call) => (
+                <div key={call.id} className="bg-white/5 rounded-lg p-4 border border-white/10 hover:border-white/20 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {call.direction === 'inbound' ? (
+                        <PhoneIncoming className="w-5 h-5 text-cyan-400" />
+                      ) : (
+                        <PhoneOutgoing className="w-5 h-5 text-orange-400" />
+                      )}
+                      <div>
+                        <p className="font-semibold text-white">
+                          {call.clients?.name || call.from_number}
+                        </p>
+                        <p className="text-sm text-gray-400">
+                          {call.to_number} • {new Date(call.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span
+                        className={`px-2 py-1 rounded text-xs font-semibold ${
+                          call.call_state === 'answered'
+                            ? 'bg-green-500/20 text-green-400'
+                            : call.call_state === 'hangup'
+                            ? 'bg-gray-500/20 text-gray-400'
+                            : call.call_state === 'failed' || call.call_state === 'no_answer'
+                            ? 'bg-red-500/20 text-red-400'
+                            : 'bg-blue-500/20 text-blue-400'
+                        }`}
+                      >
+                        {call.call_state.toUpperCase()}
+                      </span>
+                      {call.duration_seconds > 0 && (
+                        <p className="text-sm text-gray-400 mt-1">{call.duration_seconds}s</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-12 text-gray-500">
+                <Phone className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                <p>No calls yet. Start calling clients!</p>
               </div>
             )}
           </div>

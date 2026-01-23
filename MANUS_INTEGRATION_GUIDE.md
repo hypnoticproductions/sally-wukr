@@ -162,32 +162,279 @@ Each task includes structured metadata:
 
 ---
 
-## Future Enhancements
+## Bidirectional Integration: Manus to Sally Webhook
 
-### Expiration Reminders
+### Overview
 
-Planned feature: Automatic Manus tasks 3 days before profile expiration
+Sally can now receive webhook events from Manus, enabling true bidirectional integration. When Manus completes a task, schedules an action, or triggers a reminder, it can notify Sally automatically.
 
+### Webhook Endpoint
+
+**Production URL:**
 ```
-## Profile Expiration Reminder: Jane Smith
-
-**Client:** Jane Smith (jane.smith@example.com)
-**Expiration Date:** February 22, 2026
-
-**Action Required:**
-- Contact client to discuss renewal
-- Assess progress since initial payment
-- Offer renewal or consulting engagement
-
-**Urgency:** Profile expires in 3 days - immediate action required.
+https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook
 ```
 
-### Task Status Sync (Bidirectional)
+**Method:** POST
+**Authentication:** Optional (X-Manus-Signature header for verification)
+**Content-Type:** application/json
 
-Future capability: Sync task completion status back to Supabase
-- Mark clients as "contacted" when task is completed in Manus
-- Track consultation scheduling
-- Monitor conversion to full consulting engagement
+### Supported Events
+
+#### 1. Task Completed
+Notifies Sally when a Manus task is completed:
+
+```json
+{
+  "event": "task.completed",
+  "task_id": "task_abc123",
+  "client_id": "uuid-of-client",
+  "metadata": {
+    "client_name": "Jane Smith",
+    "notes": "Initial consultation completed successfully"
+  }
+}
+```
+
+**Result:** Updates client record with task completion status.
+
+#### 2. Task Scheduled
+Notifies Sally when a follow-up is scheduled:
+
+```json
+{
+  "event": "task.scheduled",
+  "task_id": "task_abc123",
+  "client_id": "uuid-of-client",
+  "scheduled_time": "2026-02-15T14:00:00Z",
+  "metadata": {
+    "call_purpose": "follow_up_consultation"
+  }
+}
+```
+
+**Result:** Updates client record with next follow-up time.
+
+#### 3. Action Required
+Triggers specific actions in Sally:
+
+```json
+{
+  "event": "action.required",
+  "task_id": "task_abc123",
+  "client_id": "uuid-of-client",
+  "action": "make_call",
+  "metadata": {
+    "call_purpose": "renewal_reminder",
+    "notes": "Profile expires in 3 days"
+  }
+}
+```
+
+**Supported Actions:**
+- `make_call` - Schedule or trigger a call
+- `send_email` - Send follow-up email
+- `schedule_meeting` - Schedule a meeting
+- `follow_up` - Flag client for follow-up
+
+**Result:** Flags client for action in admin dashboard.
+
+#### 4. Reminder Triggered
+Logs when Manus sends a reminder:
+
+```json
+{
+  "event": "reminder.triggered",
+  "task_id": "task_abc123",
+  "client_id": "uuid-of-client",
+  "metadata": {
+    "reminder_type": "profile_expiration",
+    "days_until_expiration": 3
+  }
+}
+```
+
+**Result:** Updates client with reminder timestamp.
+
+### Setting Up in Manus
+
+#### Step 1: Configure Outbound Webhook
+
+1. **Open Manus Dashboard**
+   - Navigate to Settings > Integrations > Webhooks
+
+2. **Add New Webhook**
+   - **Name:** Sally Client Updates
+   - **URL:** `https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook`
+   - **Method:** POST
+   - **Headers:** (Optional) `X-Manus-Signature: your-secret-key`
+
+3. **Select Events**
+   - Task Completed
+   - Task Scheduled
+   - Action Required
+   - Reminder Triggered
+
+4. **Save Configuration**
+
+#### Step 2: Create Workflow Automations
+
+**Example: Profile Expiration Reminder**
+
+```
+WHEN: 3 days before client profile expiration
+THEN: Send webhook to Sally
+PAYLOAD:
+{
+  "event": "action.required",
+  "task_id": "${task.id}",
+  "client_id": "${client.metadata.client_id}",
+  "action": "follow_up",
+  "metadata": {
+    "call_purpose": "renewal_reminder",
+    "notes": "Profile expires soon - discuss renewal options"
+  }
+}
+```
+
+**Example: Task Completion Sync**
+
+```
+WHEN: Task marked as completed
+IF: Task type is "sally_paid_client"
+THEN: Send webhook to Sally
+PAYLOAD:
+{
+  "event": "task.completed",
+  "task_id": "${task.id}",
+  "client_id": "${task.metadata.client_id}",
+  "metadata": {
+    "completion_notes": "${task.completion_notes}"
+  }
+}
+```
+
+### Webhook Logs
+
+All incoming webhooks are logged in the `webhook_logs` table for debugging and auditing:
+
+```sql
+SELECT * FROM webhook_logs
+WHERE source = 'manus'
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+**Webhook Log Structure:**
+- `id` - Unique log entry ID
+- `source` - Always "manus" for Manus webhooks
+- `event_type` - The event type received
+- `payload` - Full webhook payload (JSONB)
+- `processed_at` - Processing timestamp
+- `created_at` - Log creation timestamp
+
+### Client Tracking Fields
+
+The webhook updates these fields in the `clients` table:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `last_manus_update` | timestamptz | Last time Manus sent an update |
+| `manus_task_status` | text | Current status (e.g., "completed") |
+| `next_follow_up` | timestamptz | Scheduled follow-up time |
+| `requires_follow_up` | boolean | Flag for urgent follow-ups |
+| `last_reminder_sent` | timestamptz | Last reminder timestamp |
+
+**Example Query:**
+
+```sql
+SELECT
+  name,
+  email,
+  manus_task_status,
+  next_follow_up,
+  requires_follow_up
+FROM clients
+WHERE payment_status = 'paid'
+AND requires_follow_up = true
+ORDER BY next_follow_up ASC;
+```
+
+### Security
+
+#### Optional Signature Verification
+
+To verify webhooks are from Manus, configure a shared secret:
+
+1. **In Manus:** Set custom header `X-Manus-Signature: your-secret-key`
+2. **In Supabase:** Add environment variable `MANUS_WEBHOOK_SECRET=your-secret-key`
+
+The webhook will log a warning if signature is missing but will still process the request.
+
+#### Access Control
+
+- Webhook endpoint has JWT verification disabled (public access)
+- All database operations use service role for security
+- RLS policies protect sensitive data
+- Webhook logs are only readable by authenticated users
+
+### Testing the Webhook
+
+#### Using cURL
+
+```bash
+curl -X POST https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "task.completed",
+    "task_id": "test_task_123",
+    "client_id": "your-client-uuid-here",
+    "metadata": {
+      "test": true
+    }
+  }'
+```
+
+#### Expected Response
+
+```json
+{
+  "success": true,
+  "event": "task.completed",
+  "task_id": "test_task_123",
+  "received": true,
+  "client_updated": true
+}
+```
+
+### Monitoring
+
+#### Check Recent Webhooks
+
+```sql
+SELECT
+  event_type,
+  payload->>'client_id' as client_id,
+  payload->>'task_id' as task_id,
+  processed_at
+FROM webhook_logs
+WHERE source = 'manus'
+AND created_at > now() - interval '24 hours'
+ORDER BY created_at DESC;
+```
+
+#### Check Failed Webhooks
+
+Monitor Edge Function logs in Supabase Dashboard:
+1. Go to Edge Functions > sally-webhook
+2. Click "Logs" tab
+3. Look for error messages
+
+### Future Enhancements
+
+### Expiration Reminders (Now Available via Webhook)
+
+Using the webhook, Manus can trigger automatic reminders 3 days before profile expiration. Sally will flag these clients for follow-up in the admin dashboard.
 
 ### Custom Task Templates
 

@@ -157,9 +157,9 @@ Manus can trigger specific actions in Sally, such as:
    - **URL:** `https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook`
    - **Method:** POST
    - **Content-Type:** application/json
-5. (Optional) Add custom header for verification:
+5. Add custom header for verification:
    - **Header:** X-Manus-Signature
-   - **Value:** your-secret-key
+   - **Value:** `contancybearsfruit`
 6. Select events to trigger webhook
 7. Save configuration
 
@@ -328,20 +328,20 @@ CREATE TABLE webhook_logs (
 
 ## Security
 
-### Optional Signature Verification
+### Signature Verification
 
-For production use, configure a shared secret to verify webhooks are from Manus:
+A shared secret is configured to verify webhooks are from Manus:
 
 **1. In Manus:**
 Add custom header when configuring webhook:
 ```
-X-Manus-Signature: your-secret-key-here
+X-Manus-Signature: contancybearsfruit
 ```
 
 **2. In Supabase:**
-The `MANUS_WEBHOOK_SECRET` environment variable is automatically configured.
+The `MANUS_WEBHOOK_SECRET` environment variable is set to `contancybearsfruit`.
 
-If signature is missing, Sally logs a warning but still processes the webhook (fail-open approach for development).
+**Note:** This secret must match between Manus webhook configuration and Supabase Edge Function environment variables. If signature is missing, Sally logs a warning but still processes the webhook (fail-open approach for development).
 
 ### Access Control
 

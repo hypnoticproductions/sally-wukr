@@ -109,6 +109,30 @@ Deno.serve(async (req: Request) => {
         console.error("Failed to record transaction:", transactionError);
       }
 
+      const manusApiKey = Deno.env.get("MANUS_API_KEY");
+      if (manusApiKey) {
+        try {
+          const manusSyncUrl = `${supabaseUrl}/functions/v1/manus-sync`;
+          const manusSyncResponse = await fetch(manusSyncUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({ clientId }),
+          });
+
+          if (manusSyncResponse.ok) {
+            const manusSyncResult = await manusSyncResponse.json();
+            console.log(`Manus task created: ${manusSyncResult.manus_task_id}`);
+          } else {
+            console.error("Failed to sync with Manus:", await manusSyncResponse.text());
+          }
+        } catch (manusError) {
+          console.error("Manus sync error:", manusError);
+        }
+      }
+
       console.log(`Payment processed for client ${clientId}`);
     }
 

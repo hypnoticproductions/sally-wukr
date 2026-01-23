@@ -5,6 +5,8 @@ import { Mic2, MicOff, Zap, History, Mail, Wind, FileText, X, Info } from 'lucid
 import { SYSTEM_METRICS } from './constants';
 import { supabaseService } from './services/supabaseClient';
 import { dopaAI } from './services/geminiService';
+import AdminDashboard from './components/AdminDashboard';
+import Assistant from './components/Assistant';
 
 // Branding & Configuration
 const LOGO_URL = "https://res.cloudinary.com/dd6z9fx5m/image/upload/v1769104511/22.01.2026_13.41.59_REC_eyyetp.png";
@@ -35,6 +37,22 @@ async function decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: 
 }
 
 const App: React.FC = () => {
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
+  useEffect(() => {
+    const handlePopState = () => setCurrentPath(window.location.pathname);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  if (currentPath === '/admin') {
+    return <AdminDashboard />;
+  }
+
+  return <MainApp />;
+};
+
+const MainApp: React.FC = () => {
   const [isActive, setIsActive] = useState(false);
   const [status, setStatus] = useState('Sally Standby');
   const [isTalking, setIsTalking] = useState(false);
@@ -285,6 +303,8 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      <Assistant />
     </div>
   );
 };

@@ -15,7 +15,7 @@ https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook
 
 - **Method:** POST
 - **Content-Type:** application/json
-- **Authentication:** None required (optional X-Manus-Signature header for verification)
+- **Authentication:** X-Manus-Signature header (required when MANUS_WEBHOOK_SECRET is configured)
 - **CORS:** Enabled for all origins
 
 ---
@@ -230,6 +230,7 @@ Payload:
 ```bash
 curl -X POST https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook \
   -H "Content-Type: application/json" \
+  -H "X-Manus-Signature: contancybearsfruit" \
   -d '{
     "event": "task.completed",
     "task_id": "test_task_001",
@@ -256,6 +257,7 @@ curl -X POST https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook
 ```bash
 curl -X POST https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-webhook \
   -H "Content-Type: application/json" \
+  -H "X-Manus-Signature: contancybearsfruit" \
   -d '{
     "event": "action.required",
     "task_id": "test_task_002",
@@ -341,7 +343,12 @@ X-Manus-Signature: contancybearsfruit
 **2. In Supabase:**
 The `MANUS_WEBHOOK_SECRET` environment variable is set to `contancybearsfruit`.
 
-**Note:** This secret must match between Manus webhook configuration and Supabase Edge Function environment variables. If signature is missing, Sally logs a warning but still processes the webhook (fail-open approach for development).
+**Important:** When `MANUS_WEBHOOK_SECRET` is configured:
+- Webhooks **must** include the `X-Manus-Signature` header
+- The signature value **must** match the configured secret
+- Missing or invalid signatures return a `401 Unauthorized` error
+
+If `MANUS_WEBHOOK_SECRET` is not configured, the webhook accepts all requests (useful for development/testing, but not recommended for production).
 
 ### Access Control
 
@@ -444,6 +451,25 @@ SELECT tablename, policyname FROM pg_policies WHERE tablename = 'webhook_logs';
 ---
 
 ## Error Responses
+
+### 401 Unauthorized
+```json
+{
+  "error": "Missing X-Manus-Signature header",
+  "success": false
+}
+```
+
+**Cause:** Webhook signature header is missing when `MANUS_WEBHOOK_SECRET` is configured
+
+```json
+{
+  "error": "Invalid webhook signature",
+  "success": false
+}
+```
+
+**Cause:** Webhook signature does not match the configured secret
 
 ### 400 Bad Request
 ```json

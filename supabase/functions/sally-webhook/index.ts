@@ -42,9 +42,36 @@ Deno.serve(async (req: Request) => {
 
     if (manusWebhookSecret) {
       const signature = req.headers.get("X-Manus-Signature");
+
       if (!signature) {
-        console.warn("No Manus signature provided - proceeding without verification");
+        return new Response(
+          JSON.stringify({
+            error: "Missing X-Manus-Signature header",
+            success: false,
+          }),
+          {
+            status: 401,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
+
+      if (signature !== manusWebhookSecret) {
+        return new Response(
+          JSON.stringify({
+            error: "Invalid webhook signature",
+            success: false,
+          }),
+          {
+            status: 401,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      console.log("Webhook signature verified successfully");
+    } else {
+      console.warn("MANUS_WEBHOOK_SECRET not configured - webhook is not secured");
     }
 
     const payload: ManusWebhookPayload = await req.json();

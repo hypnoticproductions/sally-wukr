@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
 import { Mic2, MicOff, Zap, History, Mail, Wind, FileText, X, Info } from 'lucide-react';
 import { SYSTEM_METRICS } from './constants';
+import { supabaseService } from './services/supabaseClient';
+import { dopaAI } from './services/geminiService';
 
 // Branding & Configuration
 const LOGO_URL = "https://res.cloudinary.com/dd6z9fx5m/image/upload/v1769104511/22.01.2026_13.41.59_REC_eyyetp.png";
@@ -41,6 +43,7 @@ const App: React.FC = () => {
   const [pendingEmail, setPendingEmail] = useState<{ recipient: string, body: string, clientName?: string } | null>(null);
   const [voiceProfile, setVoiceProfile] = useState<'Kore' | 'Zephyr'>('Kore');
   const [isGeneratingBrief, setIsGeneratingBrief] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const liveCoherence = useMemo(() => {
     const base = SYSTEM_METRICS.coherenceScore;
@@ -66,32 +69,46 @@ const App: React.FC = () => {
     setIsGeneratingBrief(true);
     setStatus('Optimizing Brief...');
     try {
-      const apiKey = process.env.API_KEY || '';
-      const ai = new GoogleGenAI({ apiKey });
       const transcript = history.map(h => `${h.role}: ${h.text}`).join('\n');
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Analyze session. Extraction: Name, Business, Market goals. Brief for Richard Fortune.\n\n${transcript}`,
-      });
-      const body = response.text || "Synthesis failed.";
+      const body = await dopaAI.getDopaAnalysis(`Analyze this conversation session. Extract: Name, Business, Market goals. Create a brief for Richard Fortune.\n\n${transcript}`);
+
       const name = body.match(/Name:?\s*([^\n]+)/i);
-      setPendingEmail({ recipient: RICHARD_EMAIL, body, clientName: name ? name[1].trim() : "Strategic Lead" });
+      const clientName = name ? name[1].trim() : "Strategic Lead";
+
+      if (currentSessionId) {
+        await supabaseService.createBrief(currentSessionId, clientName, body, RICHARD_EMAIL);
+      }
+
+      setPendingEmail({ recipient: RICHARD_EMAIL, body, clientName });
       setStatus('Synthesis Complete');
-    } catch (err) { 
+    } catch (err) {
       console.error(err);
-      setStatus('Synthesis Error'); 
+      setStatus('Synthesis Error');
     } finally { setIsGeneratingBrief(false); }
   };
 
   const startDopa = async () => {
     if (isActive) {
       if (sessionRef.current) sessionRef.current.close();
+      if (currentSessionId) {
+        await supabaseService.endSession(currentSessionId);
+        setCurrentSessionId(null);
+      }
       return setIsActive(false);
     }
     try {
       setStatus('Linking Neural Axis...');
       setHistory([]);
-      const apiKey = process.env.API_KEY || '';
+
+      const domain = window.location.hostname;
+      const sessionId = await supabaseService.createSession(domain, voiceProfile);
+      setCurrentSessionId(sessionId);
+
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+      if (!apiKey) {
+        setStatus('API Key Missing');
+        return;
+      }
       const ai = new GoogleGenAI({ apiKey });
       const iCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const oCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
@@ -132,7 +149,16 @@ const App: React.FC = () => {
             if (m.serverContent?.turnComplete) {
               const u = currentInputTranscription.current.trim();
               const s = currentOutputTranscription.current.trim();
-              if (u || s) setHistory(prev => [...prev, ...(u ? [{ role: 'User', text: u }] : []), ...(s ? [{ role: 'Sally', text: s }] : [])]);
+              if (u || s) {
+                const newMessages = [...(u ? [{ role: 'User', text: u }] : []), ...(s ? [{ role: 'Sally', text: s }] : [])];
+                setHistory(prev => [...prev, ...newMessages]);
+
+                if (currentSessionId) {
+                  for (const msg of newMessages) {
+                    supabaseService.addMessage(currentSessionId, msg.role, msg.text).catch(console.error);
+                  }
+                }
+              }
               currentInputTranscription.current = ''; currentOutputTranscription.current = '';
             }
             if (m.serverContent?.interrupted) {

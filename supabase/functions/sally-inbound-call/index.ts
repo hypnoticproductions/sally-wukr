@@ -7,19 +7,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-interface InboundCallEvent {
-  data: {
-    event_type: string;
-    payload: {
-      call_control_id: string;
-      call_session_id: string;
-      from: string;
-      to: string;
-      direction: string;
-    };
-  };
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -34,70 +21,69 @@ Deno.serve(async (req: Request) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const RICHARD_PHONE_NUMBER = Deno.env.get("RICHARD_PHONE_NUMBER");
 
-    if (!TELNYX_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    const body = await req.json();
+    console.log("Received webhook:", JSON.stringify(body));
+
+    if (!TELNYX_API_KEY) {
+      console.error("TELNYX_API_KEY not configured");
       return new Response(
-        JSON.stringify({ error: "Configuration missing" }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        JSON.stringify({ error: "TELNYX_API_KEY missing" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const event: InboundCallEvent = await req.json();
+    const eventData = body.data || body;
+    const eventType = eventData.event_type;
+    const payload = eventData.payload || eventData;
+    const callControlId = payload.call_control_id;
+    const from = payload.from;
+    const to = payload.to;
+    const direction = payload.direction;
 
-    const { event_type, payload } = event.data;
-    const { call_control_id, from, to, direction } = payload;
+    console.log("Event type:", eventType, "Direction:", direction, "From:", from, "Call ID:", callControlId);
 
-    console.log("Inbound call event:", event_type, "from:", from);
+    if (eventType === "call.initiated" && direction === "incoming") {
+      console.log("Answering incoming call...");
 
-    if (event_type === "call.initiated" && direction === "incoming") {
+      const answerResponse = await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${TELNYX_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      const answerResult = await answerResponse.text();
+      console.log("Answer response:", answerResponse.status, answerResult);
+
+      return new Response(
+        JSON.stringify({ success: true, action: "answered" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (eventType === "call.answered" && direction === "incoming") {
+      console.log("Call answered, playing greeting...");
+
+      const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+
       const { data: client } = await supabase
         .from("clients")
         .select("id, name, email, company")
         .eq("phone_number", from)
         .maybeSingle();
 
-      await fetch("https://api.telnyx.com/v2/calls/" + call_control_id + "/actions/answer", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${TELNYX_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      });
-
       let greeting = "Hello! You've reached Sally with Dopa Buzz. ";
 
       if (client) {
         greeting += `Hi ${client.name}, it's great to hear from you! `;
-
-        const quintapooUrl = `${SUPABASE_URL}/functions/v1/quintapoo-query`;
-        const quintapooResponse = await fetch(quintapooUrl, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: `What recent work have we done for ${client.name}?`,
-            client_id: client.id,
-          }),
-        });
-
-        if (quintapooResponse.ok) {
-          const quintapooData = await quintapooResponse.json();
-          if (quintapooData.context) {
-            greeting += "I have your recent activity pulled up. ";
-          }
-        }
-
         greeting += "How can I help you today? Press 1 to speak with Richard, or press 2 to leave a message.";
       } else {
         greeting += "I don't recognize this number. Press 1 to speak with Richard about our services, or press 2 to leave a message.";
       }
 
-      await fetch("https://api.telnyx.com/v2/calls/" + call_control_id + "/actions/gather_using_speak", {
+      const gatherResponse = await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/gather_using_speak`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${TELNYX_API_KEY}`,
@@ -113,50 +99,43 @@ Deno.serve(async (req: Request) => {
         }),
       });
 
-      const { data: callRecord } = await supabase
+      const gatherResult = await gatherResponse.text();
+      console.log("Gather response:", gatherResponse.status, gatherResult);
+
+      await supabase
         .from("calls")
         .insert({
           client_id: client?.id || null,
-          call_control_id: call_control_id,
+          call_control_id: callControlId,
           call_session_id: payload.call_session_id,
           direction: "inbound",
           from_number: from,
           to_number: to,
           call_state: "answered",
           answered_at: new Date().toISOString(),
-        })
-        .select()
-        .single();
+        });
 
       return new Response(
         JSON.stringify({ success: true, client_found: !!client }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    if (event_type === "call.gather.ended") {
-      const digits = (event.data as any).payload?.digits;
+    if (eventType === "call.gather.ended") {
+      const digits = payload.digits;
+      console.log("Gather ended, digits:", digits);
 
       if (digits === "1" && RICHARD_PHONE_NUMBER) {
-        await fetch("https://api.telnyx.com/v2/calls/" + call_control_id + "/actions/transfer", {
+        await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/transfer`, {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${TELNYX_API_KEY}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            to: RICHARD_PHONE_NUMBER,
-          }),
+          body: JSON.stringify({ to: RICHARD_PHONE_NUMBER }),
         });
-
-        await supabase
-          .from("calls")
-          .update({ ai_summary: "Transferred to Richard" })
-          .eq("call_control_id", call_control_id);
       } else if (digits === "2") {
-        await fetch("https://api.telnyx.com/v2/calls/" + call_control_id + "/actions/speak", {
+        await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`, {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${TELNYX_API_KEY}`,
@@ -168,67 +147,62 @@ Deno.serve(async (req: Request) => {
             language: "en-US",
           }),
         });
-
-        setTimeout(async () => {
-          await fetch("https://api.telnyx.com/v2/calls/" + call_control_id + "/actions/record_start", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${TELNYX_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              channels: "single",
-              format: "mp3",
-            }),
-          });
-        }, 3000);
       } else {
-        await fetch("https://api.telnyx.com/v2/calls/" + call_control_id + "/actions/speak", {
+        await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`, {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${TELNYX_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            payload: "I didn't understand that. Please call back and press 1 or 2. Goodbye.",
+            payload: "I didn't catch that. Transferring you to Richard now.",
             voice: "female",
             language: "en-US",
           }),
         });
 
-        setTimeout(async () => {
-          await fetch("https://api.telnyx.com/v2/calls/" + call_control_id + "/actions/hangup", {
+        if (RICHARD_PHONE_NUMBER) {
+          await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/transfer`, {
             method: "POST",
             headers: {
               "Authorization": `Bearer ${TELNYX_API_KEY}`,
               "Content-Type": "application/json",
             },
+            body: JSON.stringify({ to: RICHARD_PHONE_NUMBER }),
           });
-        }, 2000);
+        }
       }
 
       return new Response(
         JSON.stringify({ success: true, action: digits }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    return new Response(
-      JSON.stringify({ success: true, event_type }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (eventType === "call.hangup") {
+      console.log("Call ended");
+
+      if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+        await supabase
+          .from("calls")
+          .update({
+            call_state: "completed",
+            ended_at: new Date().toISOString()
+          })
+          .eq("call_control_id", callControlId);
       }
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, event_type: eventType }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("Error in sally-inbound-call:", error);
     return new Response(
       JSON.stringify({ error: error.message || "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

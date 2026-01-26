@@ -7,6 +7,8 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req: Request) => {
+  console.log("telnyx-webhook received request");
+
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
@@ -15,7 +17,9 @@ Deno.serve(async (req: Request) => {
 
   try {
     rawBody = await req.text();
+    console.log("Raw body received:", rawBody.substring(0, 500));
   } catch (e) {
+    console.error("Failed to read body:", e);
     return new Response(
       JSON.stringify({ error: "Failed to read body", details: String(e) }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -26,6 +30,7 @@ Deno.serve(async (req: Request) => {
   try {
     body = JSON.parse(rawBody);
   } catch (e) {
+    console.error("Invalid JSON:", e);
     return new Response(
       JSON.stringify({ error: "Invalid JSON", details: String(e) }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -37,92 +42,67 @@ Deno.serve(async (req: Request) => {
   const callControlId = payload?.call_control_id;
   const direction = payload?.direction;
 
+  console.log("Event:", eventType, "Direction:", direction, "CallControlId:", callControlId);
+
+  const TELNYX_API_KEY = Deno.env.get("TELNYX_API_KEY");
+  console.log("API Key exists:", !!TELNYX_API_KEY);
+
+  if (!TELNYX_API_KEY) {
+    console.error("TELNYX_API_KEY not configured");
+    return new Response(
+      JSON.stringify({ error: "TELNYX_API_KEY not configured" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
   if (eventType === "call.initiated" && direction === "incoming") {
-    const TELNYX_API_KEY = Deno.env.get("TELNYX_API_KEY");
+    console.log("Answering incoming call (fire-and-forget)");
 
-    if (!TELNYX_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "TELNYX_API_KEY not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    fetch(
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${TELNYX_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      }
+    )
+      .then((res) => res.text().then((text) => console.log("Answer API response:", res.status, text)))
+      .catch((err) => console.error("Answer API error:", err));
 
-    try {
-      const answerResponse = await fetch(
-        `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${TELNYX_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({}),
-        }
-      );
-
-      const answerText = await answerResponse.text();
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          action: "answered",
-          status: answerResponse.status,
-          response: answerText
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    } catch (fetchError) {
-      return new Response(
-        JSON.stringify({ error: "Answer call failed", details: String(fetchError) }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    return new Response(
+      JSON.stringify({ success: true, action: "answering" }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 
   if (eventType === "call.answered") {
-    const TELNYX_API_KEY = Deno.env.get("TELNYX_API_KEY");
+    console.log("Call answered, sending greeting (fire-and-forget)");
 
-    if (!TELNYX_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "TELNYX_API_KEY not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    try {
-      const speakResponse = await fetch(
-        `https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${TELNYX_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            payload: "Hello! You've reached Sally with Dopa Buzz. How can I help you today?",
-            voice: "female",
-            language: "en-US",
-          }),
-        }
-      );
-
-      const speakText = await speakResponse.text();
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          action: "greeting",
-          status: speakResponse.status,
-          response: speakText
+    fetch(
+      `https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${TELNYX_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          payload: "Hello! You've reached Sally with Dopa Buzz. How can I help you today?",
+          voice: "female",
+          language: "en-US",
         }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    } catch (fetchError) {
-      return new Response(
-        JSON.stringify({ error: "Speak failed", details: String(fetchError) }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+      }
+    )
+      .then((res) => res.text().then((text) => console.log("Speak API response:", res.status, text)))
+      .catch((err) => console.error("Speak API error:", err));
+
+    return new Response(
+      JSON.stringify({ success: true, action: "greeting" }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 
   return new Response(
@@ -132,6 +112,6 @@ Deno.serve(async (req: Request) => {
       direction: direction,
       call_control_id: callControlId
     }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 });

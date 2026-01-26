@@ -6,6 +6,21 @@ Your application now has a complete Telnyx voice calling system integrated with 
 
 ---
 
+## ⚠️ Important: Call Control Application vs SIP Connection
+
+**Sally uses Call Control Applications for AI voice calling, NOT SIP Connections!**
+
+| Feature | Call Control Application | SIP Connection |
+|---------|-------------------------|----------------|
+| **Use Case** | AI voice apps, Call Control API | Traditional PBX, softphones |
+| **Portal Location** | Voice > Call Control (or Applications) | Voice > Connections |
+| **What Sally Needs** | ✅ YES - This one! | ❌ NO - Wrong type |
+| **ID Format** | conn_xxxxx or numeric | Starts with different prefix |
+
+**If you accidentally create a SIP Connection instead of a Call Control Application, your calls won't work!**
+
+---
+
 ## Phase 1: Telnyx Account Setup
 
 ### Step 1: Create Telnyx Account
@@ -22,42 +37,56 @@ Your application now has a complete Telnyx voice calling system integrated with 
 4. Select a number with **Voice** capability enabled
 5. Complete the purchase ($1-4/month)
 
-### Step 3: Create a Voice Connection
+### Step 3: Create a Call Control Application
 
-1. Go to **Voice** > **Connections** in the Telnyx Portal
-2. Click **Create New Connection**
-3. Select **Call Control Application**
-4. Name it "Sally Voice System" (or similar)
-5. Copy the **Connection ID** (you'll need this later)
+**IMPORTANT:** You need a Call Control Application (Voice App), NOT a SIP Connection!
+
+1. Go to **Voice** > **Call Control** (or **Voice** > **Applications**) in the Telnyx Portal
+2. Click **Create Call Control App** or **Create New Application**
+3. Name it "Sally Voice System"
+4. Under **Webhooks**, configure the webhook URLs (see Step 4 below)
+5. Copy the **Application ID** or **Connection ID** from the app details
+   - This ID looks like: `conn_xxxxx` or `1234567890`
+   - You'll use this as `TELNYX_CONNECTION_ID` in Supabase secrets
+
+**Note:** Call Control Applications are for AI voice systems using the Call Control API. This is different from SIP Connections which are for traditional PBX/softphone setups.
 
 ### Step 4: Configure Webhook URLs
 
-In your Connection settings, configure these webhook URLs:
+In your **Call Control Application** settings (from Step 3), configure these webhook URLs:
 
-**Primary Webhook URL:**
+**Primary Webhook URL (for call state updates):**
 ```
 https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/telnyx-webhook
 ```
 
-**Inbound Call Webhook URL:**
-```
-https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-inbound-call
-```
+**Note:** Some Telnyx setups allow you to set a default webhook URL for the entire application. You can use the primary webhook URL above. For inbound calls specifically, you'll configure the webhook in Step 5 when linking your phone number.
 
-Enable these webhook events:
-- call.initiated
-- call.ringing
-- call.answered
-- call.hangup
-- call.machine.detection.ended
-- call.recording.saved
+**Webhook Events to Enable:**
+Make sure these events are enabled in your Call Control Application:
+- `call.initiated`
+- `call.ringing`
+- `call.answered`
+- `call.hangup`
+- `call.machine.detection.ended`
+- `call.recording.saved`
 
-### Step 5: Link Number to Connection
+**Inbound Call Handling:**
+When you link your phone number to the Call Control Application (Step 5), the incoming calls will automatically be routed to the `sally-inbound-call` function.
 
-1. Go to **Numbers** > **My Numbers**
-2. Click on your purchased number
-3. Under **Voice Settings**, select your Connection
-4. Save changes
+### Step 5: Link Phone Number to Call Control Application
+
+1. Go to **Numbers** > **My Numbers** in the Telnyx Portal
+2. Click on your purchased phone number
+3. Under **Voice Settings** or **Connection**, select your Call Control Application ("Sally Voice System")
+4. Make sure the connection type is set to **Call Control**
+5. Optionally, set the webhook URL for inbound calls to:
+   ```
+   https://gvqhpyzczswpcdnqkppp.supabase.co/functions/v1/sally-inbound-call
+   ```
+6. Save changes
+
+**Verify:** Your phone number should now show as linked to your Call Control Application
 
 ### Step 6: Get API Key
 
@@ -80,9 +109,15 @@ The following secrets need to be added to your Supabase project. They're automat
 | Secret Name | Value | Description |
 |-------------|-------|-------------|
 | `TELNYX_API_KEY` | Your Telnyx API key | From Step 6 above |
-| `TELNYX_PHONE_NUMBER` | +15551234567 | Your purchased phone number |
-| `TELNYX_CONNECTION_ID` | conn_xxxxx | From Step 3 above |
-| `RICHARD_PHONE_NUMBER` | +15559876543 | Richard's phone for transfers (optional) |
+| `TELNYX_PHONE_NUMBER` | +15551234567 | Your purchased phone number with country code |
+| `TELNYX_CONNECTION_ID` | conn_xxxxx or 1234567890 | **Application ID** from your Call Control Application (Step 3) |
+| `RICHARD_PHONE_NUMBER` | +15559876543 | Richard's phone for call transfers (optional) |
+
+**Important Note on TELNYX_CONNECTION_ID:**
+- This is the **Application ID** from your Call Control Application
+- It may be labeled as "Connection ID" or "Application ID" in the Telnyx Portal
+- It's NOT the ID from Voice > Connections (SIP Connection)
+- Format: `conn_` followed by random characters, or a numeric ID
 
 ---
 
@@ -294,12 +329,28 @@ Check Telnyx Portal logs:
 
 ## Troubleshooting
 
+### "Connection Not Found" or "Invalid Connection ID" Error:
+
+**Most Common Issue:** You're using a SIP Connection ID instead of a Call Control Application ID.
+
+**Solution:**
+1. Go to **Voice** > **Call Control** (NOT Voice > Connections)
+2. Find your Call Control Application or create a new one
+3. Copy the Application ID from the app details
+4. Update `TELNYX_CONNECTION_ID` in Supabase secrets with this ID
+5. Redeploy your edge functions or wait a few minutes for the new secret to propagate
+
+**Key Difference:**
+- **Call Control Application** = For AI voice apps using Call Control API (what Sally needs)
+- **SIP Connection** = For traditional PBX/softphone setups (NOT what Sally needs)
+
 ### Calls Not Connecting:
 
-- Verify webhook URLs are correct
-- Check Telnyx Event Logs for errors
-- Confirm phone number is linked to Connection
-- Verify API key is valid
+- Verify webhook URLs are correct in your Call Control Application settings
+- Check Telnyx Event Logs (Debugging > Event Logs) for errors
+- Confirm phone number is linked to your **Call Control Application**
+- Verify API key is valid and has the correct permissions
+- Ensure `TELNYX_CONNECTION_ID` is the Application ID from your Call Control App
 
 ### Webhooks Not Received:
 

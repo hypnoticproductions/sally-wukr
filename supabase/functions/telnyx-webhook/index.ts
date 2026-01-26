@@ -8,44 +8,66 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req: Request) => {
+  console.log("Telnyx webhook called");
+
   if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: corsHeaders,
-    });
+    return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   try {
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const TELNYX_API_KEY = Deno.env.get("TELNYX_API_KEY");
-    const RICHARD_PHONE_NUMBER = Deno.env.get("RICHARD_PHONE_NUMBER");
+    const rawBody = await req.text();
+    console.log("Raw body:", rawBody);
 
-    const body = await req.json();
-    console.log("Telnyx webhook received:", JSON.stringify(body));
+    let body;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      console.error("Failed to parse JSON");
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const eventData = body.data || body;
-    const eventType = eventData.event_type;
+    const eventType = eventData.event_type || body.event_type;
     const payload = eventData.payload || eventData;
+
     const callControlId = payload.call_control_id;
     const from = payload.from;
     const to = payload.to;
     const direction = payload.direction;
 
-    console.log("Event:", eventType, "Direction:", direction, "From:", from);
+    console.log("Parsed - Event:", eventType, "Direction:", direction, "CallControlId:", callControlId);
+
+    if (!eventType) {
+      console.log("No event type found, returning OK");
+      return new Response(
+        JSON.stringify({ success: true, message: "No event type" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const TELNYX_API_KEY = Deno.env.get("TELNYX_API_KEY");
+    const RICHARD_PHONE_NUMBER = Deno.env.get("RICHARD_PHONE_NUMBER");
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (eventType === "call.initiated" && direction === "incoming") {
-      console.log("Incoming call - answering...");
+      console.log("Incoming call detected - answering");
 
       if (!TELNYX_API_KEY) {
-        console.error("TELNYX_API_KEY not set!");
+        console.error("TELNYX_API_KEY not configured");
         return new Response(
-          JSON.stringify({ error: "TELNYX_API_KEY missing" }),
+          JSON.stringify({ error: "API key missing" }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      const answerResponse = await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`, {
+      const answerUrl = `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`;
+      console.log("Calling answer URL:", answerUrl);
+
+      const answerResponse = await fetch(answerUrl, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${TELNYX_API_KEY}`,
@@ -54,52 +76,26 @@ Deno.serve(async (req: Request) => {
         body: JSON.stringify({}),
       });
 
-      console.log("Answer response:", answerResponse.status);
-
-      if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-        await supabase.from("calls").insert({
-          call_control_id: callControlId,
-          call_session_id: payload.call_session_id,
-          direction: "inbound",
-          from_number: from,
-          to_number: to,
-          call_state: "initiated",
-        });
-      }
+      const answerResult = await answerResponse.text();
+      console.log("Answer response:", answerResponse.status, answerResult);
 
       return new Response(
-        JSON.stringify({ success: true, action: "answered" }),
+        JSON.stringify({ success: true, action: "answered", status: answerResponse.status }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    if (eventType === "call.answered" && direction === "incoming") {
-      console.log("Call answered - playing greeting...");
+    if (eventType === "call.answered") {
+      console.log("Call answered - playing greeting");
 
       if (!TELNYX_API_KEY) {
         return new Response(
-          JSON.stringify({ error: "TELNYX_API_KEY missing" }),
+          JSON.stringify({ error: "API key missing" }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      let clientName = null;
-      if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-        const { data: client } = await supabase
-          .from("clients")
-          .select("name")
-          .eq("phone_number", from)
-          .maybeSingle();
-        clientName = client?.name;
-      }
-
-      let greeting = "Hello! You've reached Sally with Dopa Buzz. ";
-      if (clientName) {
-        greeting += `Hi ${clientName}, great to hear from you! `;
-      }
-      greeting += "Press 1 to speak with Richard, or press 2 to leave a message.";
+      const greeting = "Hello! You've reached Sally with Dopa Buzz. Press 1 to speak with Richard, or press 2 to leave a message.";
 
       const gatherResponse = await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/gather_using_speak`, {
         method: "POST",
@@ -117,10 +113,11 @@ Deno.serve(async (req: Request) => {
         }),
       });
 
-      console.log("Gather response:", gatherResponse.status);
+      const gatherResult = await gatherResponse.text();
+      console.log("Gather response:", gatherResponse.status, gatherResult);
 
       return new Response(
-        JSON.stringify({ success: true, action: "greeting_played" }),
+        JSON.stringify({ success: true, action: "greeting" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -131,7 +128,7 @@ Deno.serve(async (req: Request) => {
 
       if (!TELNYX_API_KEY) {
         return new Response(
-          JSON.stringify({ error: "TELNYX_API_KEY missing" }),
+          JSON.stringify({ error: "API key missing" }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -184,30 +181,15 @@ Deno.serve(async (req: Request) => {
             play_beep: true,
           }),
         });
-      } else {
-        if (RICHARD_PHONE_NUMBER) {
-          await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${TELNYX_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              payload: "Connecting you to Richard now.",
-              voice: "female",
-              language: "en-US",
-            }),
-          });
-
-          await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/transfer`, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${TELNYX_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ to: RICHARD_PHONE_NUMBER }),
-          });
-        }
+      } else if (RICHARD_PHONE_NUMBER) {
+        await fetch(`https://api.telnyx.com/v2/calls/${callControlId}/actions/transfer`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${TELNYX_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ to: RICHARD_PHONE_NUMBER }),
+        });
       }
 
       return new Response(
@@ -218,17 +200,6 @@ Deno.serve(async (req: Request) => {
 
     if (eventType === "call.hangup") {
       console.log("Call ended:", payload.hangup_cause);
-
-      if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-        await supabase
-          .from("calls")
-          .update({
-            call_state: "completed",
-            ended_at: new Date().toISOString(),
-          })
-          .eq("call_control_id", callControlId);
-      }
     }
 
     return new Response(
@@ -236,9 +207,9 @@ Deno.serve(async (req: Request) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error in telnyx-webhook:", error);
+    console.error("Error:", error);
     return new Response(
-      JSON.stringify({ error: error.message || "Internal server error" }),
+      JSON.stringify({ error: String(error) }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

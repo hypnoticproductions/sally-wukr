@@ -18,11 +18,16 @@ Deno.serve(async (req: Request) => {
 
   try {
     const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
+    const stripePriceId = Deno.env.get("STRIPE_PRICE_ID");
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!stripeSecretKey) {
       throw new Error("STRIPE_SECRET_KEY not configured");
+    }
+
+    if (!stripePriceId) {
+      throw new Error("STRIPE_PRICE_ID not configured");
     }
 
     if (!supabaseUrl || !supabaseServiceKey) {
@@ -85,14 +90,7 @@ Deno.serve(async (req: Request) => {
       customer: stripeCustomerId,
       line_items: [
         {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: "30-Day Strategic Profile Retention",
-              description: "Keep your strategic profile active for 30 days with priority access",
-            },
-            unit_amount: 3000,
-          },
+          price: stripePriceId,
           quantity: 1,
         },
       ],

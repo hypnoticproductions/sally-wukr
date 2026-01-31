@@ -16,7 +16,9 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
+    // Allow passing live key in request body, otherwise use env secret
+    const { stripeSecretKey: providedKey } = await req.json().catch(() => ({}));
+    const stripeSecretKey = providedKey || Deno.env.get("STRIPE_SECRET_KEY");
 
     if (!stripeSecretKey) {
       throw new Error("STRIPE_SECRET_KEY not configured");

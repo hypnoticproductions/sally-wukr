@@ -99,6 +99,7 @@ Deno.serve(async (req: Request) => {
       cancel_url: `${req.headers.get("origin") || "https://dopa.buzz"}?payment=cancelled`,
       metadata: {
         client_id: clientId,
+        product_type: 'profile_retention',
       },
     });
 

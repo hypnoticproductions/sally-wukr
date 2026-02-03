@@ -91,17 +91,23 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      const productType = session.metadata?.product_type || 'profile_retention';
+
       const { error: transactionError } = await supabase
         .from("payment_transactions")
         .insert({
           client_id: clientId,
+          product_type: productType,
           stripe_payment_intent_id: session.payment_intent as string,
+          stripe_session_id: session.id,
           amount: amountPaid,
           status: "succeeded",
           payment_method: session.payment_method_types?.[0] || "unknown",
+          payment_date: new Date().toISOString(),
           metadata: {
             session_id: session.id,
             customer_email: session.customer_email,
+            product_type: productType,
           },
         });
 

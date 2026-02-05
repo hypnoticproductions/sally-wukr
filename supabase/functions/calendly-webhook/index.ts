@@ -43,7 +43,67 @@ interface CalendlyWebhookPayload {
   };
 }
 
-async function fetchEventDetails(inviteeUri: string) {
+async function logError(
+  supabase: any,
+  errorType: string,
+  severity: string,
+  message: string,
+  context: Record<string, any> = {},
+  stackTrace?: string
+) {
+  try {
+    await supabase.from("error_logs").insert({
+      source: "calendly-webhook",
+      error_type: errorType,
+      severity,
+      message,
+      context,
+      stack_trace: stackTrace,
+    });
+  } catch (e) {
+    console.error("Failed to log error:", e);
+  }
+}
+
+async function logWebhook(
+  supabase: any,
+  eventType: string,
+  payload: any,
+  status: string,
+  processingTimeMs: number,
+  errorMessage?: string
+) {
+  try {
+    const { data } = await supabase.from("webhook_logs").insert({
+      source: "calendly",
+      event_type: eventType,
+      payload,
+      status,
+      processing_time_ms: processingTimeMs,
+      error_message: errorMessage,
+      processed_at: new Date().toISOString(),
+    }).select().single();
+
+    if (status === "failed" && data) {
+      await supabase.from("webhook_failures").insert({
+        webhook_log_id: data.id,
+        source: "calendly",
+        event_type: eventType,
+        failure_reason: errorMessage || "Unknown error",
+        payload,
+        status: "pending",
+        next_retry_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      });
+    }
+
+    return data;
+  } catch (e) {
+    console.error("Failed to log webhook:", e);
+    return null;
+  }
+}
+
+async function fetchEventDetails(inviteeUri: string, supabase: any) {
   try {
     const response = await fetch(inviteeUri, {
       headers: {
@@ -53,13 +113,20 @@ async function fetchEventDetails(inviteeUri: string) {
     });
 
     if (!response.ok) {
-      throw new Error(`Calendly API error: ${response.status}`);
+      await logError(supabase, "service_unavailable", "medium", "Calendly API error", {
+        status: response.status,
+        invitee_uri: inviteeUri,
+      });
+      return null;
     }
 
     const data = await response.json();
     return data.resource;
   } catch (error) {
-    console.error("Error fetching event details from Calendly:", error);
+    await logError(supabase, "service_unavailable", "medium", "Error fetching event details from Calendly", {
+      invitee_uri: inviteeUri,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }, error instanceof Error ? error.stack : undefined);
     return null;
   }
 }
@@ -93,7 +160,11 @@ async function getOrCreateClient(supabase: any, email: string, name: string) {
     .single();
 
   if (error) {
-    console.error("Error creating client:", error);
+    await logError(supabase, "database_error", "high", "Error creating client", {
+      email,
+      name,
+      error: error.message,
+    });
     return null;
   }
 
@@ -101,8 +172,6 @@ async function getOrCreateClient(supabase: any, email: string, name: string) {
 }
 
 async function handleInviteeCreated(supabase: any, payload: CalendlyWebhookPayload) {
-  console.log("Processing invitee.created event");
-
   const { email, name, uri: inviteeUri, event: eventUri } = payload.payload;
 
   const client = await getOrCreateClient(supabase, email, name);
@@ -110,7 +179,7 @@ async function handleInviteeCreated(supabase: any, payload: CalendlyWebhookPaylo
     throw new Error("Failed to create or fetch client");
   }
 
-  const eventDetails = await fetchEventDetails(inviteeUri);
+  const eventDetails = await fetchEventDetails(inviteeUri, supabase);
 
   let eventStartTime = null;
   let eventEndTime = null;
@@ -143,11 +212,15 @@ async function handleInviteeCreated(supabase: any, payload: CalendlyWebhookPaylo
     .single();
 
   if (error) {
-    console.error("Error creating consultation:", error);
+    await logError(supabase, "database_error", "high", "Error creating consultation", {
+      client_id: client.id,
+      invitee_uri: inviteeUri,
+      error: error.message,
+    });
     throw error;
   }
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("clients")
     .update({
       has_active_consultation: true,
@@ -155,13 +228,17 @@ async function handleInviteeCreated(supabase: any, payload: CalendlyWebhookPaylo
     })
     .eq("id", client.id);
 
-  console.log("Consultation created successfully:", consultation.id);
+  if (updateError) {
+    await logError(supabase, "database_error", "medium", "Error updating client consultation status", {
+      client_id: client.id,
+      error: updateError.message,
+    });
+  }
+
   return consultation;
 }
 
 async function handleInviteeCanceled(supabase: any, payload: CalendlyWebhookPayload) {
-  console.log("Processing invitee.canceled event");
-
   const { uri: inviteeUri } = payload.payload;
   const isRescheduled = payload.payload.rescheduled || false;
 
@@ -172,7 +249,9 @@ async function handleInviteeCanceled(supabase: any, payload: CalendlyWebhookPayl
     .maybeSingle();
 
   if (!consultation) {
-    console.log("No consultation found for invitee URI:", inviteeUri);
+    await logError(supabase, "webhook_failure", "low", "No consultation found for cancellation", {
+      invitee_uri: inviteeUri,
+    });
     return;
   }
 
@@ -182,10 +261,17 @@ async function handleInviteeCanceled(supabase: any, payload: CalendlyWebhookPayl
     canceled_by: payload.payload.cancellation?.canceled_by || null,
   };
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("consultations")
     .update(updateData)
     .eq("id", consultation.id);
+
+  if (updateError) {
+    await logError(supabase, "database_error", "medium", "Error updating consultation cancellation", {
+      consultation_id: consultation.id,
+      error: updateError.message,
+    });
+  }
 
   const { data: upcomingConsultations } = await supabase
     .from("consultations")
@@ -200,11 +286,11 @@ async function handleInviteeCanceled(supabase: any, payload: CalendlyWebhookPayl
     .from("clients")
     .update({ has_active_consultation: hasActiveConsultation })
     .eq("id", consultation.client_id);
-
-  console.log("Consultation updated to", updateData.status);
 }
 
 Deno.serve(async (req: Request) => {
+  const startTime = Date.now();
+
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 200,
@@ -212,27 +298,29 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  let supabase: any;
+  let eventType = "unknown";
+  let payload: CalendlyWebhookPayload | null = null;
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const payload: CalendlyWebhookPayload = await req.json();
+    payload = await req.json();
+    eventType = payload?.event || "unknown";
 
-    await supabase.from("webhook_logs").insert({
-      source: "calendly",
-      event_type: payload.event,
-      payload: payload,
-      processed_at: new Date().toISOString(),
-    });
-
-    if (payload.event === "invitee.created") {
+    if (payload?.event === "invitee.created") {
       await handleInviteeCreated(supabase, payload);
-    } else if (payload.event === "invitee.canceled") {
+    } else if (payload?.event === "invitee.canceled") {
       await handleInviteeCanceled(supabase, payload);
     } else {
-      console.log("Unhandled event type:", payload.event);
+      await logError(supabase, "webhook_failure", "low", "Unhandled Calendly event type", {
+        event_type: payload?.event,
+      });
     }
+
+    await logWebhook(supabase, eventType, payload, "success", Date.now() - startTime);
 
     return new Response(
       JSON.stringify({ success: true, message: "Webhook processed" }),
@@ -245,10 +333,19 @@ Deno.serve(async (req: Request) => {
       }
     );
   } catch (error) {
-    console.error("Error processing webhook:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const stackTrace = error instanceof Error ? error.stack : undefined;
+
+    if (supabase) {
+      await logError(supabase, "function_error", "high", "Webhook processing error", {
+        event_type: eventType,
+        error: errorMessage,
+      }, stackTrace);
+      await logWebhook(supabase, eventType, payload, "failed", Date.now() - startTime, errorMessage);
+    }
 
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ success: false, error: errorMessage }),
       {
         status: 500,
         headers: {

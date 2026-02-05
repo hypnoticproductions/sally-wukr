@@ -1,8 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Users, Clock, TrendingUp, AlertCircle, Crown, Mail, Phone, PhoneCall, PhoneIncoming, PhoneOutgoing } from 'lucide-react';
+import { DollarSign, Users, Clock, TrendingUp, AlertCircle, Crown, Mail, Phone, PhoneCall, PhoneIncoming, PhoneOutgoing, Activity, AlertTriangle, CheckCircle, XCircle, RefreshCw, Bell, Server } from 'lucide-react';
 import { clientService } from '../services/clientService';
 import { Client } from '../types';
 import { supabase } from '../services/supabaseClient';
+
+interface HealthStatus {
+  service: string;
+  status: 'healthy' | 'degraded' | 'down';
+  responseTimeMs: number;
+  details: Record<string, any>;
+}
+
+interface ErrorLog {
+  id: string;
+  source: string;
+  error_type: string;
+  severity: string;
+  message: string;
+  context: Record<string, any>;
+  resolved: boolean;
+  created_at: string;
+}
+
+interface AlertNotification {
+  id: string;
+  channel: string;
+  status: string;
+  message: string;
+  sent_at: string;
+  acknowledged_at: string | null;
+}
 
 const AdminDashboard: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
@@ -22,10 +49,27 @@ const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'paid' | 'free' | 'expired'>('all');
   const [callingClient, setCallingClient] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'clients' | 'monitoring'>('clients');
+  const [healthStatus, setHealthStatus] = useState<HealthStatus[]>([]);
+  const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
+  const [alertNotifications, setAlertNotifications] = useState<AlertNotification[]>([]);
+  const [errorStats, setErrorStats] = useState({
+    errorsLastHour: 0,
+    errorsLast24Hours: 0,
+    unresolvedErrors: 0,
+    pendingWebhookRetries: 0,
+  });
+  const [healthLoading, setHealthLoading] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'monitoring') {
+      loadMonitoringData();
+    }
+  }, [activeTab]);
 
   const loadData = async () => {
     setLoading(true);
@@ -63,6 +107,69 @@ const AdminDashboard: React.FC = () => {
         averageDuration: avgDuration,
       });
     }
+  };
+
+  const loadMonitoringData = async () => {
+    setHealthLoading(true);
+
+    const [healthResponse, errors, alerts] = await Promise.all([
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/system-health-check`, {
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+      }).then(r => r.json()).catch(() => null),
+      supabase
+        .from('error_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20),
+      supabase
+        .from('alert_notifications')
+        .select('*')
+        .order('sent_at', { ascending: false })
+        .limit(10),
+    ]);
+
+    if (healthResponse) {
+      setHealthStatus(healthResponse.services || []);
+      setErrorStats(healthResponse.errorStats || {
+        errorsLastHour: 0,
+        errorsLast24Hours: 0,
+        unresolvedErrors: 0,
+        pendingWebhookRetries: 0,
+      });
+    }
+
+    if (errors.data) {
+      setErrorLogs(errors.data);
+    }
+
+    if (alerts.data) {
+      setAlertNotifications(alerts.data);
+    }
+
+    setHealthLoading(false);
+  };
+
+  const resolveError = async (errorId: string) => {
+    await supabase
+      .from('error_logs')
+      .update({ resolved: true, resolved_at: new Date().toISOString() })
+      .eq('id', errorId);
+
+    loadMonitoringData();
+  };
+
+  const acknowledgeAlert = async (alertId: string) => {
+    await supabase
+      .from('alert_notifications')
+      .update({
+        status: 'acknowledged',
+        acknowledged_at: new Date().toISOString()
+      })
+      .eq('id', alertId);
+
+    loadMonitoringData();
   };
 
   const makeCall = async (clientId: string) => {
@@ -108,6 +215,34 @@ const AdminDashboard: React.FC = () => {
     return client.payment_status === filter;
   });
 
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'healthy':
+        return <CheckCircle className="w-5 h-5 text-green-400" />;
+      case 'degraded':
+        return <AlertTriangle className="w-5 h-5 text-yellow-400" />;
+      case 'down':
+        return <XCircle className="w-5 h-5 text-red-400" />;
+      default:
+        return <Activity className="w-5 h-5 text-gray-400" />;
+    }
+  };
+
+  const getSeverityColor = (severity: string) => {
+    switch (severity) {
+      case 'critical':
+        return 'bg-red-500/20 text-red-400 border-red-500/30';
+      case 'high':
+        return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+      case 'medium':
+        return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+      case 'low':
+        return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+      default:
+        return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center">
@@ -127,354 +262,605 @@ const AdminDashboard: React.FC = () => {
           <p className="text-gray-400">Client & Revenue Management</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="obsidian-card p-6 border border-gold-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <DollarSign className="w-8 h-8 text-gold-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold gold-gradient">${stats.totalRevenue.toFixed(2)}</p>
-                <p className="text-sm text-gray-400">Total Revenue</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="obsidian-card p-6 border border-green-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <Crown className="w-8 h-8 text-green-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold text-green-400">{stats.paidClients}</p>
-                <p className="text-sm text-gray-400">Paid Clients</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="obsidian-card p-6 border border-blue-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <Users className="w-8 h-8 text-blue-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold text-blue-400">{stats.freeClients}</p>
-                <p className="text-sm text-gray-400">Free Clients</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="obsidian-card p-6 border border-red-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <AlertCircle className="w-8 h-8 text-red-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold text-red-400">{stats.expiredClients}</p>
-                <p className="text-sm text-gray-400">Expired Profiles</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="obsidian-card p-6 border border-purple-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <Phone className="w-8 h-8 text-purple-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold text-purple-400">{callStats.totalCalls}</p>
-                <p className="text-sm text-gray-400">Total Calls</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="obsidian-card p-6 border border-cyan-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <PhoneIncoming className="w-8 h-8 text-cyan-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold text-cyan-400">{callStats.inboundCalls}</p>
-                <p className="text-sm text-gray-400">Inbound Calls</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="obsidian-card p-6 border border-orange-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <PhoneOutgoing className="w-8 h-8 text-orange-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold text-orange-400">{callStats.outboundCalls}</p>
-                <p className="text-sm text-gray-400">Outbound Calls</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="obsidian-card p-6 border border-teal-500/30 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <Clock className="w-8 h-8 text-teal-500" />
-              <div className="text-right">
-                <p className="text-3xl font-bold text-teal-400">{callStats.averageDuration}s</p>
-                <p className="text-sm text-gray-400">Avg Duration</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold gold-gradient">Client List</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setFilter('all')}
-                className={`px-4 py-2 rounded-lg transition-colors ${
-                  filter === 'all'
-                    ? 'bg-gold-500 text-black font-bold'
-                    : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => setFilter('paid')}
-                className={`px-4 py-2 rounded-lg transition-colors ${
-                  filter === 'paid'
-                    ? 'bg-green-500 text-black font-bold'
-                    : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-              >
-                Paid
-              </button>
-              <button
-                onClick={() => setFilter('free')}
-                className={`px-4 py-2 rounded-lg transition-colors ${
-                  filter === 'free'
-                    ? 'bg-blue-500 text-black font-bold'
-                    : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-              >
-                Free
-              </button>
-              <button
-                onClick={() => setFilter('expired')}
-                className={`px-4 py-2 rounded-lg transition-colors ${
-                  filter === 'expired'
-                    ? 'bg-red-500 text-black font-bold'
-                    : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-              >
-                Expired
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-white/10">
-                  <th className="text-left p-3 text-gray-400 font-semibold">Name</th>
-                  <th className="text-left p-3 text-gray-400 font-semibold">Email</th>
-                  <th className="text-left p-3 text-gray-400 font-semibold">Company</th>
-                  <th className="text-left p-3 text-gray-400 font-semibold">Status</th>
-                  <th className="text-left p-3 text-gray-400 font-semibold">Paid</th>
-                  <th className="text-left p-3 text-gray-400 font-semibold">Score</th>
-                  <th className="text-left p-3 text-gray-400 font-semibold">Expires</th>
-                  <th className="text-left p-3 text-gray-400 font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredClients.map((client) => {
-                  const daysRemaining = getDaysRemaining(client.profile_expires_at);
-                  return (
-                    <tr key={client.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          {client.payment_status === 'paid' && (
-                            <Crown className="w-4 h-4 text-gold-500" />
-                          )}
-                          <span className="font-medium">{client.name}</span>
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <a href={`mailto:${client.email}`} className="text-blue-400 hover:text-blue-300 flex items-center gap-1">
-                          <Mail className="w-3 h-3" />
-                          {client.email}
-                        </a>
-                      </td>
-                      <td className="p-3 text-gray-300">{client.company || '-'}</td>
-                      <td className="p-3">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-semibold ${
-                            client.payment_status === 'paid'
-                              ? 'bg-green-500/20 text-green-400'
-                              : client.payment_status === 'expired'
-                              ? 'bg-red-500/20 text-red-400'
-                              : 'bg-gray-500/20 text-gray-400'
-                          }`}
-                        >
-                          {client.payment_status.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="p-3 font-mono text-gold-400">${client.total_paid.toFixed(2)}</td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-12 h-2 bg-white/10 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-gold-500"
-                              style={{ width: `${client.client_value_score}%` }}
-                            ></div>
-                          </div>
-                          <span className="text-xs text-gray-400">{client.client_value_score}</span>
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        {daysRemaining !== null ? (
-                          <div className="flex items-center gap-1">
-                            <Clock className="w-4 h-4 text-gray-400" />
-                            <span
-                              className={`text-sm ${
-                                daysRemaining < 5 ? 'text-red-400 font-semibold' : 'text-gray-400'
-                              }`}
-                            >
-                              {daysRemaining}d
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-gray-600">-</span>
-                        )}
-                      </td>
-                      <td className="p-3">
-                        {client.phone_number ? (
-                          <button
-                            onClick={() => makeCall(client.id)}
-                            disabled={callingClient === client.id}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <PhoneCall className="w-4 h-4" />
-                            {callingClient === client.id ? 'Calling...' : 'Call'}
-                          </button>
-                        ) : (
-                          <span className="text-gray-600 text-sm">No phone</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-
-            {filteredClients.length === 0 && (
-              <div className="text-center py-12 text-gray-500">
-                <Users className="w-16 h-16 mx-auto mb-4 opacity-20" />
-                <p>No clients found in this category.</p>
-              </div>
+        <div className="flex gap-4 mb-8">
+          <button
+            onClick={() => setActiveTab('clients')}
+            className={`px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2 ${
+              activeTab === 'clients'
+                ? 'bg-gold-500 text-black'
+                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+            Clients & Calls
+          </button>
+          <button
+            onClick={() => setActiveTab('monitoring')}
+            className={`px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2 ${
+              activeTab === 'monitoring'
+                ? 'bg-gold-500 text-black'
+                : 'bg-white/5 text-gray-400 hover:bg-white/10'
+            }`}
+          >
+            <Activity className="w-5 h-5" />
+            System Monitoring
+            {errorStats.unresolvedErrors > 0 && (
+              <span className="ml-2 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                {errorStats.unresolvedErrors}
+              </span>
             )}
-          </div>
+          </button>
         </div>
 
-        <div className="mt-8 obsidian-card border border-gold-500/30 rounded-xl p-6">
-          <h2 className="text-2xl font-bold gold-gradient mb-6">Recent Calls</h2>
-          <div className="space-y-3">
-            {recentCalls.length > 0 ? (
-              recentCalls.map((call) => (
-                <div key={call.id} className="bg-white/5 rounded-lg p-4 border border-white/10 hover:border-white/20 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      {call.direction === 'inbound' ? (
-                        <PhoneIncoming className="w-5 h-5 text-cyan-400" />
-                      ) : (
-                        <PhoneOutgoing className="w-5 h-5 text-orange-400" />
-                      )}
-                      <div>
-                        <p className="font-semibold text-white">
-                          {call.clients?.name || call.from_number}
-                        </p>
-                        <p className="text-sm text-gray-400">
-                          {call.to_number} • {new Date(call.created_at).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-semibold ${
-                          call.call_state === 'answered'
-                            ? 'bg-green-500/20 text-green-400'
-                            : call.call_state === 'hangup'
-                            ? 'bg-gray-500/20 text-gray-400'
-                            : call.call_state === 'failed' || call.call_state === 'no_answer'
-                            ? 'bg-red-500/20 text-red-400'
-                            : 'bg-blue-500/20 text-blue-400'
-                        }`}
-                      >
-                        {call.call_state.toUpperCase()}
-                      </span>
-                      {call.duration_seconds > 0 && (
-                        <p className="text-sm text-gray-400 mt-1">{call.duration_seconds}s</p>
-                      )}
-                    </div>
+        {activeTab === 'clients' && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              <div className="obsidian-card p-6 border border-gold-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <DollarSign className="w-8 h-8 text-gold-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold gold-gradient">${stats.totalRevenue.toFixed(2)}</p>
+                    <p className="text-sm text-gray-400">Total Revenue</p>
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="text-center py-12 text-gray-500">
-                <Phone className="w-16 h-16 mx-auto mb-4 opacity-20" />
-                <p>No calls yet. Start calling clients!</p>
               </div>
-            )}
-          </div>
-        </div>
 
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
-            <h3 className="text-xl font-bold gold-gradient mb-4">Quick Stats</h3>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Total Clients</span>
-                <span className="font-bold text-white">{clients.length}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Conversion Rate</span>
-                <span className="font-bold text-green-400">
-                  {clients.length > 0
-                    ? ((stats.paidClients / clients.length) * 100).toFixed(1)
-                    : 0}%
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Avg. Revenue Per Client</span>
-                <span className="font-bold text-gold-400">
-                  ${clients.length > 0 ? (stats.totalRevenue / clients.length).toFixed(2) : '0.00'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Returning Clients</span>
-                <span className="font-bold text-blue-400">
-                  {clients.filter(c => c.returning_client).length}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
-            <h3 className="text-xl font-bold gold-gradient mb-4">Urgent Actions</h3>
-            <div className="space-y-3">
-              {clients
-                .filter(c => {
-                  const days = getDaysRemaining(c.profile_expires_at);
-                  return days !== null && days <= 5 && days > 0;
-                })
-                .map(client => (
-                  <div key={client.id} className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-semibold text-orange-400">{client.name}</p>
-                        <p className="text-xs text-gray-400">{client.email}</p>
-                      </div>
-                      <span className="text-xs bg-orange-500 text-black px-2 py-1 rounded font-bold">
-                        {getDaysRemaining(client.profile_expires_at)}d left
-                      </span>
-                    </div>
+              <div className="obsidian-card p-6 border border-green-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <Crown className="w-8 h-8 text-green-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-green-400">{stats.paidClients}</p>
+                    <p className="text-sm text-gray-400">Paid Clients</p>
                   </div>
-                ))}
-              {clients.filter(c => {
-                const days = getDaysRemaining(c.profile_expires_at);
-                return days !== null && days <= 5 && days > 0;
-              }).length === 0 && (
-                <p className="text-gray-500 text-center py-4">No urgent actions needed.</p>
-              )}
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-blue-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <Users className="w-8 h-8 text-blue-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-blue-400">{stats.freeClients}</p>
+                    <p className="text-sm text-gray-400">Free Clients</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-red-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <AlertCircle className="w-8 h-8 text-red-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-red-400">{stats.expiredClients}</p>
+                    <p className="text-sm text-gray-400">Expired Profiles</p>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              <div className="obsidian-card p-6 border border-cyan-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <Phone className="w-8 h-8 text-cyan-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-cyan-400">{callStats.totalCalls}</p>
+                    <p className="text-sm text-gray-400">Total Calls</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-teal-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <PhoneIncoming className="w-8 h-8 text-teal-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-teal-400">{callStats.inboundCalls}</p>
+                    <p className="text-sm text-gray-400">Inbound Calls</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-orange-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <PhoneOutgoing className="w-8 h-8 text-orange-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-orange-400">{callStats.outboundCalls}</p>
+                    <p className="text-sm text-gray-400">Outbound Calls</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-emerald-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <Clock className="w-8 h-8 text-emerald-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-emerald-400">{callStats.averageDuration}s</p>
+                    <p className="text-sm text-gray-400">Avg Duration</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold gold-gradient">Client List</h2>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setFilter('all')}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      filter === 'all'
+                        ? 'bg-gold-500 text-black font-bold'
+                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setFilter('paid')}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      filter === 'paid'
+                        ? 'bg-green-500 text-black font-bold'
+                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                    }`}
+                  >
+                    Paid
+                  </button>
+                  <button
+                    onClick={() => setFilter('free')}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      filter === 'free'
+                        ? 'bg-blue-500 text-black font-bold'
+                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                    }`}
+                  >
+                    Free
+                  </button>
+                  <button
+                    onClick={() => setFilter('expired')}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      filter === 'expired'
+                        ? 'bg-red-500 text-black font-bold'
+                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                    }`}
+                  >
+                    Expired
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-white/10">
+                      <th className="text-left p-3 text-gray-400 font-semibold">Name</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Email</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Company</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Status</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Paid</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Score</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Expires</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredClients.map((client) => {
+                      const daysRemaining = getDaysRemaining(client.profile_expires_at);
+                      return (
+                        <tr key={client.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              {client.payment_status === 'paid' && (
+                                <Crown className="w-4 h-4 text-gold-500" />
+                              )}
+                              <span className="font-medium">{client.name}</span>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <a href={`mailto:${client.email}`} className="text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                              <Mail className="w-3 h-3" />
+                              {client.email}
+                            </a>
+                          </td>
+                          <td className="p-3 text-gray-300">{client.company || '-'}</td>
+                          <td className="p-3">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-semibold ${
+                                client.payment_status === 'paid'
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : client.payment_status === 'expired'
+                                  ? 'bg-red-500/20 text-red-400'
+                                  : 'bg-gray-500/20 text-gray-400'
+                              }`}
+                            >
+                              {client.payment_status.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="p-3 font-mono text-gold-400">${client.total_paid.toFixed(2)}</td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-12 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-gold-500"
+                                  style={{ width: `${client.client_value_score}%` }}
+                                ></div>
+                              </div>
+                              <span className="text-xs text-gray-400">{client.client_value_score}</span>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            {daysRemaining !== null ? (
+                              <div className="flex items-center gap-1">
+                                <Clock className="w-4 h-4 text-gray-400" />
+                                <span
+                                  className={`text-sm ${
+                                    daysRemaining < 5 ? 'text-red-400 font-semibold' : 'text-gray-400'
+                                  }`}
+                                >
+                                  {daysRemaining}d
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-600">-</span>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            {client.phone_number ? (
+                              <button
+                                onClick={() => makeCall(client.id)}
+                                disabled={callingClient === client.id}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <PhoneCall className="w-4 h-4" />
+                                {callingClient === client.id ? 'Calling...' : 'Call'}
+                              </button>
+                            ) : (
+                              <span className="text-gray-600 text-sm">No phone</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {filteredClients.length === 0 && (
+                  <div className="text-center py-12 text-gray-500">
+                    <Users className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                    <p>No clients found in this category.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-8 obsidian-card border border-gold-500/30 rounded-xl p-6">
+              <h2 className="text-2xl font-bold gold-gradient mb-6">Recent Calls</h2>
+              <div className="space-y-3">
+                {recentCalls.length > 0 ? (
+                  recentCalls.map((call) => (
+                    <div key={call.id} className="bg-white/5 rounded-lg p-4 border border-white/10 hover:border-white/20 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {call.direction === 'inbound' ? (
+                            <PhoneIncoming className="w-5 h-5 text-cyan-400" />
+                          ) : (
+                            <PhoneOutgoing className="w-5 h-5 text-orange-400" />
+                          )}
+                          <div>
+                            <p className="font-semibold text-white">
+                              {call.clients?.name || call.from_number}
+                            </p>
+                            <p className="text-sm text-gray-400">
+                              {call.to_number} - {new Date(call.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-semibold ${
+                              call.call_state === 'answered'
+                                ? 'bg-green-500/20 text-green-400'
+                                : call.call_state === 'hangup'
+                                ? 'bg-gray-500/20 text-gray-400'
+                                : call.call_state === 'failed' || call.call_state === 'no_answer'
+                                ? 'bg-red-500/20 text-red-400'
+                                : 'bg-blue-500/20 text-blue-400'
+                            }`}
+                          >
+                            {call.call_state.toUpperCase()}
+                          </span>
+                          {call.duration_seconds > 0 && (
+                            <p className="text-sm text-gray-400 mt-1">{call.duration_seconds}s</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12 text-gray-500">
+                    <Phone className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                    <p>No calls yet. Start calling clients!</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
+                <h3 className="text-xl font-bold gold-gradient mb-4">Quick Stats</h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Total Clients</span>
+                    <span className="font-bold text-white">{clients.length}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Conversion Rate</span>
+                    <span className="font-bold text-green-400">
+                      {clients.length > 0
+                        ? ((stats.paidClients / clients.length) * 100).toFixed(1)
+                        : 0}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Avg. Revenue Per Client</span>
+                    <span className="font-bold text-gold-400">
+                      ${clients.length > 0 ? (stats.totalRevenue / clients.length).toFixed(2) : '0.00'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Returning Clients</span>
+                    <span className="font-bold text-blue-400">
+                      {clients.filter(c => c.returning_client).length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
+                <h3 className="text-xl font-bold gold-gradient mb-4">Urgent Actions</h3>
+                <div className="space-y-3">
+                  {clients
+                    .filter(c => {
+                      const days = getDaysRemaining(c.profile_expires_at);
+                      return days !== null && days <= 5 && days > 0;
+                    })
+                    .map(client => (
+                      <div key={client.id} className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <p className="font-semibold text-orange-400">{client.name}</p>
+                            <p className="text-xs text-gray-400">{client.email}</p>
+                          </div>
+                          <span className="text-xs bg-orange-500 text-black px-2 py-1 rounded font-bold">
+                            {getDaysRemaining(client.profile_expires_at)}d left
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  {clients.filter(c => {
+                    const days = getDaysRemaining(c.profile_expires_at);
+                    return days !== null && days <= 5 && days > 0;
+                  }).length === 0 && (
+                    <p className="text-gray-500 text-center py-4">No urgent actions needed.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {activeTab === 'monitoring' && (
+          <>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold gold-gradient">System Health & Monitoring</h2>
+              <button
+                onClick={loadMonitoringData}
+                disabled={healthLoading}
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${healthLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              <div className="obsidian-card p-6 border border-red-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <AlertTriangle className="w-8 h-8 text-red-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-red-400">{errorStats.errorsLastHour}</p>
+                    <p className="text-sm text-gray-400">Errors (1h)</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-orange-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <AlertCircle className="w-8 h-8 text-orange-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-orange-400">{errorStats.errorsLast24Hours}</p>
+                    <p className="text-sm text-gray-400">Errors (24h)</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-yellow-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <XCircle className="w-8 h-8 text-yellow-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-yellow-400">{errorStats.unresolvedErrors}</p>
+                    <p className="text-sm text-gray-400">Unresolved</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="obsidian-card p-6 border border-cyan-500/30 rounded-xl">
+                <div className="flex items-center justify-between mb-4">
+                  <RefreshCw className="w-8 h-8 text-cyan-500" />
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-cyan-400">{errorStats.pendingWebhookRetries}</p>
+                    <p className="text-sm text-gray-400">Pending Retries</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+              <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
+                <h3 className="text-xl font-bold gold-gradient mb-4 flex items-center gap-2">
+                  <Server className="w-5 h-5" />
+                  Service Health
+                </h3>
+                <div className="space-y-3">
+                  {healthStatus.length > 0 ? (
+                    healthStatus.map((service) => (
+                      <div
+                        key={service.service}
+                        className={`p-4 rounded-lg border ${
+                          service.status === 'healthy'
+                            ? 'bg-green-500/10 border-green-500/30'
+                            : service.status === 'degraded'
+                            ? 'bg-yellow-500/10 border-yellow-500/30'
+                            : 'bg-red-500/10 border-red-500/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            {getStatusIcon(service.status)}
+                            <div>
+                              <p className="font-semibold capitalize">{service.service}</p>
+                              <p className="text-sm text-gray-400">
+                                {service.responseTimeMs}ms response time
+                              </p>
+                            </div>
+                          </div>
+                          <span
+                            className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                              service.status === 'healthy'
+                                ? 'bg-green-500/20 text-green-400'
+                                : service.status === 'degraded'
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-red-500/20 text-red-400'
+                            }`}
+                          >
+                            {service.status.toUpperCase()}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <Activity className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                      <p>No health data available. Click refresh to check services.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
+                <h3 className="text-xl font-bold gold-gradient mb-4 flex items-center gap-2">
+                  <Bell className="w-5 h-5" />
+                  Recent Alerts
+                </h3>
+                <div className="space-y-3 max-h-80 overflow-y-auto">
+                  {alertNotifications.length > 0 ? (
+                    alertNotifications.map((alert) => (
+                      <div
+                        key={alert.id}
+                        className={`p-4 rounded-lg border ${
+                          alert.status === 'acknowledged'
+                            ? 'bg-white/5 border-white/10'
+                            : 'bg-orange-500/10 border-orange-500/30'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <p className="text-sm text-white">{alert.message}</p>
+                            <p className="text-xs text-gray-400 mt-1">
+                              {new Date(alert.sent_at).toLocaleString()}
+                            </p>
+                          </div>
+                          {alert.status !== 'acknowledged' && (
+                            <button
+                              onClick={() => acknowledgeAlert(alert.id)}
+                              className="ml-2 px-3 py-1 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded text-xs transition-colors"
+                            >
+                              Acknowledge
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <Bell className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                      <p>No alerts. System is running smoothly.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="obsidian-card border border-gold-500/30 rounded-xl p-6">
+              <h3 className="text-xl font-bold gold-gradient mb-4 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5" />
+                Recent Errors
+              </h3>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {errorLogs.length > 0 ? (
+                  errorLogs.map((error) => (
+                    <div
+                      key={error.id}
+                      className={`p-4 rounded-lg border ${getSeverityColor(error.severity)} ${
+                        error.resolved ? 'opacity-50' : ''
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-mono bg-black/30 px-2 py-0.5 rounded">
+                              {error.source}
+                            </span>
+                            <span className="text-xs font-semibold uppercase">
+                              {error.severity}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {error.error_type}
+                            </span>
+                          </div>
+                          <p className="text-sm text-white">{error.message}</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            {new Date(error.created_at).toLocaleString()}
+                          </p>
+                          {error.context && Object.keys(error.context).length > 0 && (
+                            <details className="mt-2">
+                              <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-300">
+                                View context
+                              </summary>
+                              <pre className="text-xs mt-1 p-2 bg-black/30 rounded overflow-x-auto">
+                                {JSON.stringify(error.context, null, 2)}
+                              </pre>
+                            </details>
+                          )}
+                        </div>
+                        {!error.resolved && (
+                          <button
+                            onClick={() => resolveError(error.id)}
+                            className="ml-2 px-3 py-1 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded text-xs transition-colors flex items-center gap-1"
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            Resolve
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12 text-gray-500">
+                    <CheckCircle className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                    <p>No errors recorded. Everything is working correctly!</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
